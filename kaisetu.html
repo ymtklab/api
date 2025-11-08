@@ -1,0 +1,344 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>一問一答 単語帳（固定URL版）徹底解剖ドキュメント</title>
+<style>
+  :root{
+    --bg:#0b0c0f; --paper:#0f1217; --ink:#e5e7eb; --muted:#9aa4b2;
+    --accent:#60a5fa; --ok:#34d399; --ng:#f87171; --line:#232833;
+  }
+  @media (prefers-color-scheme: light){
+    :root{
+      --bg:#f4f7fb; --paper:#ffffff; --ink:#0f172a; --muted:#64748b;
+      --accent:#2563eb; --ok:#059669; --ng:#dc2626; --line:#d9dee7;
+    }
+  }
+  html,body{ background:var(--bg); color:var(--ink); }
+  body{ font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Noto Sans JP", "Hiragino Kaku Gothic ProN", Meiryo, sans-serif; margin:0; }
+  .wrap{ max-width:980px; margin:0 auto; padding:24px 16px 64px; }
+  header h1{ margin:0 0 4px; font-size:28px; }
+  header p{ margin:0; color:var(--muted); }
+  .card{ background:var(--paper); border:1px solid var(--line); border-radius:16px; padding:20px; }
+  .toc ol{ margin:0; padding-left:20px; }
+  h2{ margin-top:32px; border-bottom:1px solid var(--line); padding-bottom:6px; }
+  h3{ margin-top:24px; }
+  code, pre{ font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace; }
+  pre{ background:var(--paper); border:1px solid var(--line); padding:14px; border-radius:12px; overflow:auto; }
+  .note{ border-left:4px solid var(--accent); padding:10px 12px; background:color-mix(in oklab, var(--accent) 9%, transparent); }
+  .ok{ color:var(--ok); } .ng{ color:var(--ng); }
+  table{ width:100%; border-collapse:collapse; }
+  th,td{ border:1px solid var(--line); padding:8px 10px; vertical-align:top; }
+  th{ background:color-mix(in oklab, var(--accent) 10%, var(--paper)); text-align:left; }
+  .kbd{ border:1px solid var(--line); border-bottom-width:2px; padding:2px 6px; border-radius:6px; background:color-mix(in oklab, var(--ink) 5%, transparent); font-size:12px;}
+  .small{ font-size:12px; color:var(--muted); }
+  .two-cols{ display:grid; grid-template-columns: 1fr; gap:12px; }
+  @media(min-width:900px){ .two-cols{ grid-template-columns: 1fr 1fr; } }
+  @media print{
+    body{ background:#fff; }
+    .wrap{ padding:0; }
+    a[href^="http"]::after{ content:" <" attr(href) ">"; color:#666; font-size:10px; }
+    .card{ break-inside: avoid; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header style="margin-bottom:16px">
+    <h1>一問一答 単語帳（固定URL版）徹底解剖</h1>
+    <p>対象：<code>https://ymtklab.github.io/api/api.json</code> を常に参照するフロントエンド単一HTMLアプリの分解・設計ノート</p>
+  </header>
+
+  <section class="card toc">
+    <h2 id="toc">目次</h2>
+    <ol>
+      <li><a href="#overview">全体像と特徴</a></li>
+      <li><a href="#data">データ仕様（JSON / JSON Lines）</a></li>
+      <li><a href="#arch">アーキテクチャと主要変数</a></li>
+      <li><a href="#flow">起動〜学習までの処理フロー</a></li>
+      <li><a href="#ui">UI部品とイベント（クリック/キーボード）</a></li>
+      <li><a href="#algo">出題アルゴリズム（誤答優先・シャッフル）</a></li>
+      <li><a href="#state">進捗保存（localStorage）とエクスポート/インポート</a></li>
+      <li><a href="#fetch">データ取得戦略（UTF-8, no-store, BOM除去）</a></li>
+      <li><a href="#ext">拡張アイデア（タグ・スコアリング・間隔反復など）</a></li>
+      <li><a href="#deploy">配布と運用（GitHub Pages, CORS, オフライン）</a></li>
+      <li><a href="#qa">トラブルシューティングQ&A</a></li>
+      <li><a href="#checklist">レビュー・改善チェックリスト</a></li>
+    </ol>
+  </section>
+
+  <section class="card" id="overview">
+    <h2>1. 全体像と特徴</h2>
+    <ul>
+      <li><b>サーバー不要・単一HTML</b>：ブラウザで開くだけ。学習データは公開URLから取得。</li>
+      <li><b>固定データURL</b>：常に <code>https://ymtklab.github.io/api/api.json</code> からフェッチ。</li>
+      <li><b>二方向出題</b>：問題を「用語→説明」「説明→用語」で切替。</li>
+      <li><b>誤答優先</b>：間違えたカードは山の後方に戻しつつ、一定確率で直近で再出題。</li>
+      <li><b>進捗自動保存</b>：localStorage に保存。データ内容のハッシュでキーを分離。</li>
+      <li><b>UTF-8・BOM対応</b>：文字化け/先頭BOMに耐性。</li>
+      <li><b>ショートカット</b>：<span class="kbd">Space</span> めくる / <span class="kbd">Enter</span> 次へ / <span class="kbd">← →</span> / <span class="kbd">1</span> 正解 / <span class="kbd">2</span> もう一度。</li>
+      <li><b>キャッシュ回避</b>：<code>fetch(..., { cache: 'no-store' })</code> で常に最新を取得。</li>
+    </ul>
+  </section>
+
+  <section class="card" id="data">
+    <h2>2. データ仕様（JSON / JSON Lines）</h2>
+    <p>想定スキーマは最小限で、各要素は <code>{ "name": string, "value": string }</code>。</p>
+
+    <h3>2.1 JSON配列の例</h3>
+    <pre><code>[
+  { "name": "CPU", "value": "中央処理装置。計算と制御を担う。" },
+  { "name": "NTP", "value": "時計同期のためのネットワークプロトコル。" }
+]</code></pre>
+
+    <h3>2.2 JSON Linesの例（1行1 JSON）</h3>
+    <pre><code>{"name":"CPU","value":"中央処理装置。計算と制御を担う。"}
+{"name":"NTP","value":"時計同期のためのネットワークプロトコル。"}</code></pre>
+
+    <h3>2.3 不正値の扱い</h3>
+    <ul>
+      <li>空行は無視。</li>
+      <li>JSONLでのパース失敗行はスキップし、開発者ツールのコンソールに警告。</li>
+    </ul>
+  </section>
+
+  <section class="card" id="arch">
+    <h2>3. アーキテクチャと主要変数</h2>
+    <div class="two-cols">
+      <div>
+        <h3>3.1 主要定数</h3>
+<pre><code>const DATA_URL = "https://ymtklab.github.io/api/api.json";</code></pre>
+        <p>取得先は固定。UIの「再読み込み」も同URLを叩きます。</p>
+
+        <h3>3.2 進捗キーのハッシュ</h3>
+<pre><code>function djb2(str){
+  let h = 5381;
+  for (let i=0;i&lt;str.length;i++) h = ((h &lt;&lt; 5) + h) ^ str.charCodeAt(i);
+  return (h>>>0).toString(36);
+}</code></pre>
+        <p>データの<strong>中身</strong>からハッシュを作っているので、URLは同じでも中身が更新されれば別デッキとして扱えます。</p>
+      </div>
+      <div>
+        <h3>3.3 状態変数（抜粋）</h3>
+        <table>
+          <thead><tr><th>変数</th><th>役割</th></tr></thead>
+          <tbody>
+            <tr><td><code>cards</code></td><td>正規化済みカード配列（{name, value}）</td></tr>
+            <tr><td><code>order</code></td><td>出題順インデックス配列</td></tr>
+            <tr><td><code>cursor</code></td><td>現在の出題位置（<code>order</code>の何番目か）</td></tr>
+            <tr><td><code>reveal</code></td><td>答え表示中かどうか</td></tr>
+            <tr><td><code>wrongPool</code></td><td>誤答カードのインデックス集合（再出題優先）</td></tr>
+            <tr><td><code>stats</code></td><td>{ ok, ng }の累積</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <section class="card" id="flow">
+    <h2>4. 起動〜学習までの処理フロー</h2>
+    <ol>
+      <li><b>初期描画</b>：空のUIを表示（「再読み込み」誘導）。</li>
+      <li><b>データ取得</b>：<code>fetch(DATA_URL, { cache: 'no-store' })</code> → <code>text()</code>でUTF-8文字列として取得。</li>
+      <li><b>整形・パース</b>：BOM除去→JSON配列 or JSONL を解析→<code>cards</code>へ。</li>
+      <li><b>進捗復元</b>：同一ハッシュの保存データがあれば <code>order</code> などを復元。なければ新規としてシャッフル。</li>
+      <li><b>出題</b>：UIへ現在カードの問題面を描画。ショートカットで操作。</li>
+      <li><b>回答結果</b>：<span class="ok">正解</span>なら誤答集合から外し、<span class="ng">誤答</span>なら集合へ追加＋末尾へ差し戻し。</li>
+      <li><b>自動保存</b>：各操作後にlocalStorageへシリアライズ。</li>
+    </ol>
+
+<pre><code>// ざっくり疑似コード
+fetchRemote() {
+  const text = await fetch(DATA_URL, { cache:'no-store' }).then(r => r.text());
+  parseAndNormalize(text);  // cards[] を作る
+  deckHash = djb2(text);
+  if (!loadProgress(deckHash)) { order = shuffle(range(cards.length)); }
+  renderQA();
+}</code></pre>
+  </section>
+
+  <section class="card" id="ui">
+    <h2>5. UI部品とイベント（クリック/キーボード）</h2>
+    <div class="two-cols">
+      <div>
+        <h3>5.1 コンポーネント</h3>
+        <ul>
+          <li><b>統計ピル</b>：総数、正解、誤答、残り、デッキ名。</li>
+          <li><b>プログレスバー</b>：<code>cursor</code>進度割合を表示。</li>
+          <li><b>問題/答えカード</b>：クリックやSpaceでめくる。</li>
+          <li><b>操作ボタン</b>：表示/隠す、前/次、正解/もう一度、シャッフル、進捗I/O、再読み込み。</li>
+          <li><b>モード選択</b>：<code>name→value</code> / <code>value→name</code>。</li>
+          <li><b>自動表示</b>：次カードで自動的に答えを出すか。</li>
+        </ul>
+      </div>
+      <div>
+        <h3>5.2 キーボード割り当て</h3>
+        <table>
+          <thead><tr><th>キー</th><th>動作</th></tr></thead>
+          <tbody>
+            <tr><td><span class="kbd">Space</span></td><td>答えの表示/非表示をトグル</td></tr>
+            <tr><td><span class="kbd">Enter</span></td><td>次のカードへ</td></tr>
+            <tr><td><span class="kbd">← / →</span></td><td>前 / 次へ移動</td></tr>
+            <tr><td><span class="kbd">1</span></td><td>正解として記録</td></tr>
+            <tr><td><span class="kbd">2</span></td><td>誤答として記録（優先再出題）</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <h3>5.3 アクセシビリティの配慮（最低限）</h3>
+    <ul>
+      <li>カードは<code>tabindex="0"</code>でフォーカス可能。</li>
+      <li>ボタンは自然言語のラベル＋絵文字で意味が推測しやすい。</li>
+      <li>配色はダーク/ライトの自動切替（<code>prefers-color-scheme</code>）。</li>
+    </ul>
+  </section>
+
+  <section class="card" id="algo">
+    <h2>6. 出題アルゴリズム（誤答優先・シャッフル）</h2>
+    <h3>6.1 シャッフル（Fisher–Yates）</h3>
+<pre><code>function fisherShuffle(arr){
+  for (let i=arr.length-1; i>0; i--){
+    const j = Math.floor(Math.random()*(i+1));
+    [arr[i], arr[j]] = [arr[j], arr[i]];
+  }
+}</code></pre>
+
+    <h3>6.2 誤答優先ロジック</h3>
+<pre><code>// 誤答集合に入っているカードを 60% の確率で「次の手」に差し込む
+if (wrongPool.size &gt; 0 &amp;&amp; Math.random() &lt; 0.6) {
+  const pick = [...wrongPool][Math.floor(Math.random() * wrongPool.size)];
+  const pos = order.indexOf(pick);
+  if (pos &gt; cursor) {
+    order.splice(pos,1);
+    order.splice(cursor+1,0,pick);
+  }
+}</code></pre>
+    <p>さらに誤答時には末尾へ差し戻すため、自然と復習頻度が上がります。</p>
+  </section>
+
+  <section class="card" id="state">
+    <h2>7. 進捗保存（localStorage）とI/O</h2>
+    <h3>7.1 保存フォーマット</h3>
+<pre><code>{
+  deckName, deckHash, order, cursor, stats, wrongPool: [...],
+  mode, autoReveal, timestamp
+}</code></pre>
+    <p>キーは <code>flashcards.&lt;deckHash&gt;.v1</code>。データ内容が変わればハッシュも変わるため、履歴が混ざりません。</p>
+
+    <h3>7.2 エクスポート/インポート</h3>
+    <ul>
+      <li><b>エクスポート</b>：localStorageのJSONをBlobダウンロード（UTF-8）。</li>
+      <li><b>インポート</b>：JSONを読み込み、ハッシュが異なる場合は確認ダイアログ→保存。</li>
+    </ul>
+  </section>
+
+  <section class="card" id="fetch">
+    <h2>8. データ取得戦略（UTF-8, no-store, BOM除去）</h2>
+<pre><code>const resp = await fetch(DATA_URL, { cache: 'no-store' });
+const text = await resp.text();                // UTF-8として受け取り
+const t = text.replace(/^\uFEFF/, '');         // 先頭BOMを除去
+// JSON配列 → 失敗したら JSON Lines として行単位で parse
+</code></pre>
+    <ul>
+      <li><b>no-store</b>でキャッシュをバイパス：常に最新のファイルを取得。</li>
+      <li><b>BOM除去</b>：一部エディタが付けるBOMにより <code>JSON.parse</code> が失敗するのを回避。</li>
+      <li><b>フェイルセーフ</b>：配列でパースできなければJSON Linesを試す。</li>
+      <li><b>エラー表示</b>：HTTPステータスや例外メッセージを<code>alert</code>で提示。</li>
+    </ul>
+  </section>
+
+  <section class="card" id="ext">
+    <h2>9. 拡張アイデア</h2>
+    <ol>
+      <li><b>タグ/カテゴリ</b>：データに<code>tags: string[]</code>を追加し、出題範囲をフィルタ。</li>
+      <li><b>スコアリング</b>：カードごとにE-Factor/間隔反復（SM-2）を付与し、次回出題時刻を計算。</li>
+      <li><b>検索とお気に入り</b>：用語検索、スター付与→「弱点復習モード」。</li>
+      <li><b>音声読み上げ</b>：Web Speech APIで問題や答えをTTS。</li>
+      <li><b>PWA化</b>：Service Workerでオフラインでも起動・進捗維持。</li>
+      <li><b>統計ダッシュボード</b>：日別正答率、ラーニングカーブを可視化。</li>
+    </ol>
+
+<pre><code>// 例：カード拡張スキーマ
+{
+  "name":"chrony",
+  "value":"NTPクライアント/サーバー実装。高速収束やスムージングが特徴。",
+  "tags":["NTP","RHEL","Zabbix"],
+  "ef":2.5,          // easiness factor
+  "interval":1,      // 次回までの日数
+  "repetitions":0    // 連続正解回数
+}</code></pre>
+  </section>
+
+  <section class="card" id="deploy">
+    <h2>10. 配布と運用（GitHub Pages, CORS, オフライン）</h2>
+    <ul>
+      <li><b>同一オリジン推奨</b>：解説対象はGitHub Pages上の静的JSON。CORSはGitHubが適切に付与。</li>
+      <li><b>更新運用</b>：<span class="kbd">no-store</span>で都度最新を取得。配列/JSONLどちらも可。</li>
+      <li><b>バージョニング</b>：データが大きく変わるなら、別URLに置くかJSON内に<code>version</code>を保持。</li>
+      <li><b>PWA</b>：Service Worker導入でオフライン学習を強化（ただし<code>no-store</code>方針との整合を設計）。</li>
+    </ul>
+  </section>
+
+  <section class="card" id="qa">
+    <h2>11. トラブルシューティングQ&A</h2>
+    <details>
+      <summary>Q1. 画面に何も出ません。</summary>
+      <div>
+        <ol>
+          <li>ネットワーク到達性とURLの有効性を確認：<code>https://ymtklab.github.io/api/api.json</code></li>
+          <li>ブラウザの開発者ツール（Console/Network）でエラーを確認（HTTPコード・CORS）</li>
+          <li>JSON形式が正しいか検証（末尾カンマ、クォート漏れ、BOM）</li>
+        </ol>
+      </div>
+    </details>
+    <details>
+      <summary>Q2. 直近の更新が反映されません。</summary>
+      <div>
+        <p><code>no-store</code>で取りに行きますが、プロキシやCDNが古い応答を返す場合があります。暫定策：</p>
+        <ul>
+          <li>URLにダミークエリを追加して改変（コード側修正例：<code>DATA_URL + "?t=" + Date.now()</code>）。</li>
+          <li>サーバ側でキャッシュ制御ヘッダを短くする。</li>
+        </ul>
+      </div>
+    </details>
+    <details>
+      <summary>Q3. 日本語が文字化けします。</summary>
+      <div>
+        <ul>
+          <li>JSONファイルがUTF-8で保存されているか確認。</li>
+          <li>BOM付きでもBOM除去でパース可能（ただしツールによっては別文字コード保存に注意）。</li>
+        </ul>
+      </div>
+    </details>
+    <details>
+      <summary>Q4. 誤って進捗を壊してしまいました。</summary>
+      <div>
+        <ul>
+          <li>エクスポートした<code>.json</code>があれば「進捗インポート」で復元可能。</li>
+          <li><code>localStorage</code>の該当キーを削除すれば初期化されます。</li>
+        </ul>
+      </div>
+    </details>
+  </section>
+
+  <section class="card" id="checklist">
+    <h2>12. レビュー・改善チェックリスト</h2>
+    <ul>
+      <li>[ ] <b>型安全</b>：TypeScript化し、カード型/状態型を定義。</li>
+      <li>[ ] <b>入力検証</b>：空文字・超長文・HTMLタグのサニタイズ。</li>
+      <li>[ ] <b>アクセシビリティ</b>：ARIA属性、コントラスト比、フォーカス可視化。</li>
+      <li>[ ] <b>自動テスト</b>：出題順・誤答優先・保存/復元のユニットテスト。</li>
+      <li>[ ] <b>パフォーマンス</b>：巨大データ時の描画最適化（仮想リスト化は不要だが、split/parseでのtry-catch最適化）。</li>
+      <li>[ ] <b>回線不安定</b>：指数バックオフの再試行／部分的なオフラインキャッシュ。</li>
+      <li>[ ] <b>学習理論</b>：間隔反復（SM-2/FSRS）の導入と可視化。</li>
+    </ul>
+  </section>
+
+  <footer class="small" style="margin-top:16px">
+    © このドキュメントは、固定URLから学習データを取得するフロントエンド専用「一問一答」アプリを教材として、設計・実装・運用の観点から解説したものです。
+  </footer>
+</div>
+</body>
+</html>

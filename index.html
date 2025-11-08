@@ -1,0 +1,390 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>一問一答 単語帳（固定URL版）</title>
+<style>
+  :root { --bg:#0b0c0f; --card:#14161a; --muted:#8b96a8; --accent:#60a5fa; --ok:#34d399; --ng:#f87171; --text:#e5e7eb; }
+  @media (prefers-color-scheme: light) {
+    :root { --bg:#f8fafc; --card:#ffffff; --muted:#64748b; --accent:#2563eb; --ok:#059669; --ng:#dc2626; --text:#0f172a; }
+  }
+  body { margin:0; font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Noto Sans JP", "Hiragino Kaku Gothic ProN", Meiryo, sans-serif;
+         background:var(--bg); color:var(--text); }
+  .wrap { max-width:900px; margin:24px auto; padding: 0 16px; }
+  header { display:flex; flex-wrap:wrap; gap:12px; align-items:center; justify-content:space-between; margin-bottom:16px;}
+  header h1 { font-size:20px; margin:0; }
+  .controls { display:flex; flex-wrap:wrap; gap:8px; align-items:center; }
+  .btn{
+    background:var(--card); color:var(--text); border:1px solid #2b3038; padding:10px 12px; border-radius:12px; cursor:pointer;
+  }
+  .btn:hover{ border-color:var(--accent); }
+  .select { padding:10px 12px; border-radius:12px; border:1px solid #2b3038; background:var(--card); color:var(--text); }
+  .row { display:flex; gap:12px; align-items:center; flex-wrap:wrap; }
+  .grow { flex:1 1 auto; }
+  .card {
+    user-select:none; background:var(--card); border:1px solid #2b3038; border-radius:16px; padding:28px; min-height:180px;
+    display:flex; align-items:center; justify-content:center; text-align:center; font-size:22px; line-height:1.6;
+    transition: transform .15s ease;
+  }
+  .card:hover { transform: translateY(-1px); border-color:#3a4250; }
+  .muted { color:var(--muted); font-size:12px; }
+  .grid { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
+  .stats { display:flex; gap:16px; align-items:center; flex-wrap:wrap; }
+  .pill { font-size:12px; padding:6px 8px; border-radius:999px; background:#1f232b; border:1px solid #2b3038;}
+  .pill.ok{ color:var(--ok); border-color:var(--ok); background:color-mix(in oklab, var(--ok) 15%, transparent); }
+  .pill.ng{ color:var(--ng); border-color:var(--ng); background:color-mix(in oklab, var(--ng) 12%, transparent); }
+  progress { width:100%; height:10px; accent-color: var(--accent);}
+  .kbd { font-family:ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace; font-size:12px; padding:2px 6px; border:1px solid #2b3038; border-bottom-width:2px; border-radius:6px; background:#0f1116;}
+  .hidden { display:none !important; }
+  .hint { font-size:14px; color:var(--muted); margin-top:8px; }
+  .footer { margin-top:24px; font-size:12px; color:var(--muted); }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>一問一答 単語帳</h1>
+    <div class="controls">
+      <button id="btn-reload" class="btn" title="データを再取得">🔄 再読み込み</button>
+      <button id="btn-shuffle" class="btn" title="カードをシャッフル">🔀 シャッフル</button>
+      <button id="btn-reset" class="btn" title="進捗をリセット">♻ 進捗リセット</button>
+      <button id="btn-export" class="btn" title="進捗を書き出し（UTF-8）">💾 進捗エクスポート</button>
+      <label class="btn" role="button" title="保存した進捗JSONを読み込み">
+        📥 進捗インポート
+        <input id="progress-file" type="file" accept=".json" style="display:none" />
+      </label>
+    </div>
+  </header>
+
+  <section class="row">
+    <div class="grow stats">
+      <span class="pill" id="deckName">デッキ：未ロード</span>
+      <span class="pill">総数 <b id="stat-total">0</b></span>
+      <span class="pill ok">正解 <b id="stat-ok">0</b></span>
+      <span class="pill ng">誤答 <b id="stat-ng">0</b></span>
+      <span class="pill">残り <b id="stat-left">0</b></span>
+    </div>
+    <div class="row">
+      <select id="mode" class="select" title="出題方向">
+        <option value="name2value">問題：用語 → 答え：説明</option>
+        <option value="value2name">問題：説明 → 答え：用語</option>
+      </select>
+      <label class="row btn" role="button" title="答えを自動で表示">
+        <input id="autoReveal" type="checkbox" style="margin-right:6px" />
+        自動で答え表示
+      </label>
+    </div>
+  </section>
+
+  <section style="margin:12px 0">
+    <progress id="progress" max="100" value="0"></progress>
+  </section>
+
+  <section id="qa">
+    <div id="question" class="card" tabindex="0" title="クリック/スペースでめくる">ここに問題が表示されます</div>
+    <div id="answer" class="card hidden" title="答え">ここに答えが表示されます</div>
+    <div class="hint">操作：<span class="kbd">Space</span> めくる / <span class="kbd">Enter</span> 次へ / <span class="kbd">← →</span> 前後 / <span class="kbd">1</span> 正解 / <span class="kbd">2</span> もう一度</div>
+  </section>
+
+  <section class="grid" style="margin-top:12px">
+    <button id="btn-show" class="btn">👁️‍🗨️ 答えを表示（Space）</button>
+    <button id="btn-hide" class="btn">🙈 答えを隠す</button>
+    <button id="btn-prev" class="btn">⬅ 前へ</button>
+    <button id="btn-next" class="btn">次へ ➡</button>
+    <button id="btn-correct" class="btn" style="border-color:var(--ok);">✅ 正解（1）</button>
+    <button id="btn-wrong" class="btn" style="border-color:var(--ng);">❌ もう一度（2）</button>
+  </section>
+
+  <details style="margin-top:16px">
+    <summary>🔧 説明 / 仕様</summary>
+    <div class="muted" style="margin-top:8px">
+      <ul>
+        <li>データは常に <code>https://ymtklab.github.io/api/api.json</code> からUTF-8で取得します（JSON配列 or JSON Lines対応）。</li>
+        <li>各要素は <code>{ "name": "...", "value": "..." }</code> を想定。</li>
+        <li>進捗は <code>localStorage</code> に自動保存。内容ハッシュでデッキ識別します。</li>
+        <li>「もう一度」マークのカードは優先的に再出題します。</li>
+      </ul>
+    </div>
+  </details>
+
+  <div class="footer">
+    © Frontend-only Flashcards / 固定URL・UTF-8・オフライン進捗
+  </div>
+</div>
+
+<script>
+(() => {
+  /*** 設定 ***/
+  const DATA_URL = "https://ymtklab.github.io/api/api.json";
+
+  /*** 状態 ***/
+  let cards = [];             // {name, value}
+  let order = [];             // 出題順 index配列
+  let cursor = 0;             // 現在位置（orderのインデックス）
+  let reveal = false;         // 答え表示中か
+  let deckHash = "";          // データ内容から作るハッシュ（進捗キー）
+  let stats = { ok: 0, ng: 0 }; // 正解/誤答数
+  let wrongPool = new Set();  // 誤答カード index
+  let deckName = "api (remote)";
+
+  /*** DOM ***/
+  const el = {
+    progressFile: document.getElementById('progress-file'),
+    question: document.getElementById('question'),
+    answer: document.getElementById('answer'),
+    show: document.getElementById('btn-show'),
+    hide: document.getElementById('btn-hide'),
+    prev: document.getElementById('btn-prev'),
+    next: document.getElementById('btn-next'),
+    correct: document.getElementById('btn-correct'),
+    wrong: document.getElementById('btn-wrong'),
+    shuffle: document.getElementById('btn-shuffle'),
+    reset: document.getElementById('btn-reset'),
+    reload: document.getElementById('btn-reload'),
+    export: document.getElementById('btn-export'),
+    mode: document.getElementById('mode'),
+    autoReveal: document.getElementById('autoReveal'),
+    statTotal: document.getElementById('stat-total'),
+    statOk: document.getElementById('stat-ok'),
+    statNg: document.getElementById('stat-ng'),
+    statLeft: document.getElementById('stat-left'),
+    progress: document.getElementById('progress'),
+    deckName: document.getElementById('deckName'),
+  };
+
+  /*** ユーティリティ ***/
+  const djb2 = (str) => { // 簡易ハッシュ（デッキ識別用）
+    let h = 5381;
+    for (let i=0;i<str.length;i++) h = ((h << 5) + h) ^ str.charCodeAt(i);
+    return (h>>>0).toString(36);
+  };
+  const saveKey = () => `flashcards.${deckHash}.v1`;
+  const pickSide = (c) => {
+    const m = el.mode.value;
+    return { q: m === 'name2value' ? c.name : c.value,
+             a: m === 'name2value' ? c.value : c.name };
+  };
+  const fisherShuffle = (arr) => {
+    for (let i=arr.length-1;i>0;i--){
+      const j = Math.floor(Math.random()*(i+1));
+      [arr[i], arr[j]] = [arr[j], arr[i]];
+    }
+  };
+
+  /*** 進捗保存/復元 ***/
+  function saveProgress() {
+    if (!deckHash) return;
+    const data = {
+      deckName, deckHash, order, cursor, stats, wrongPool: Array.from(wrongPool),
+      mode: el.mode.value, autoReveal: el.autoReveal.checked,
+      timestamp: Date.now()
+    };
+    localStorage.setItem(saveKey(), JSON.stringify(data));
+  }
+  function loadProgress(hash) {
+    const raw = localStorage.getItem(`flashcards.${hash}.v1`);
+    if (!raw) return false;
+    try {
+      const p = JSON.parse(raw);
+      if (p.deckHash !== hash) return false;
+      order = p.order || order;
+      cursor = Math.min(Math.max(0, p.cursor||0), Math.max(0, order.length-1));
+      stats = p.stats || stats;
+      wrongPool = new Set(p.wrongPool || []);
+      el.mode.value = p.mode || 'name2value';
+      el.autoReveal.checked = !!p.autoReveal;
+      return true;
+    } catch { return false; }
+  }
+
+  /*** 描画 ***/
+  function updateStats() {
+    el.statTotal.textContent = cards.length;
+    el.statOk.textContent = stats.ok;
+    el.statNg.textContent = stats.ng;
+    const left = Math.max(0, order.length - cursor - 1);
+    el.statLeft.textContent = left;
+    const done = cards.length ? Math.round(((cursor+1)/order.length)*100) : 0;
+    el.progress.max = 100;
+    el.progress.value = done;
+    el.deckName.textContent = `デッキ：${deckName}`;
+  }
+  function renderQA() {
+    if (!cards.length) {
+      el.question.textContent = "リモートのデータを取得してください（🔄 再読み込み）";
+      el.answer.textContent = "";
+      return;
+    }
+    const idx = order[cursor] ?? 0;
+    const sides = pickSide(cards[idx]);
+    el.question.textContent = sides.q || "(空)";
+    el.answer.textContent = sides.a || "(空)";
+    el.answer.classList.toggle('hidden', !reveal);
+    el.question.classList.toggle('hidden', reveal);
+    updateStats();
+  }
+
+  /*** 出題制御 ***/
+  function nextCard() {
+    if (!cards.length) return;
+    if (wrongPool.size > 0 && Math.random() < 0.6) {
+      const pick = [...wrongPool][Math.floor(Math.random() * wrongPool.size)];
+      const pos = order.indexOf(pick);
+      if (pos > cursor) {
+        order.splice(pos,1);
+        order.splice(cursor+1,0,pick);
+      }
+    }
+    cursor = Math.min(order.length-1, cursor+1);
+    reveal = !!el.autoReveal.checked;
+    renderQA();
+    saveProgress();
+  }
+  function prevCard() {
+    if (!cards.length) return;
+    cursor = Math.max(0, cursor-1);
+    reveal = !!el.autoReveal.checked;
+    renderQA();
+    saveProgress();
+  }
+  function showAnswer(flag=true) {
+    reveal = flag;
+    renderQA();
+  }
+  function markCorrect() {
+    stats.ok++;
+    const idx = order[cursor];
+    wrongPool.delete(idx);
+    saveProgress();
+    nextCard();
+  }
+  function markWrong() {
+    stats.ng++;
+    const idx = order[cursor];
+    wrongPool.add(idx);
+    const pos = order.indexOf(idx);
+    if (pos !== -1 && pos < order.length-1) {
+      order.splice(pos,1);
+      order.push(idx);
+    }
+    saveProgress();
+    nextCard();
+  }
+
+  /*** リモート読み込み（UTF-8, no-store） ***/
+  async function fetchRemote() {
+    try {
+      const resp = await fetch(DATA_URL, { cache: 'no-store' });
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+      const text = await resp.text(); // 文字列として取得（UTF-8）
+      await loadDeckFromText(text);
+      // デッキ名はURL末尾を採用
+      deckName = "api (remote)";
+      renderQA();
+      saveProgress();
+    } catch (e) {
+      console.error(e);
+      alert(`データの取得に失敗しました。\n${DATA_URL}\nエラー: ${e.message}`);
+    }
+  }
+
+  async function loadDeckFromText(text) {
+    const t = text.replace(/^\uFEFF/, ''); // BOM除去
+    deckHash = djb2(t);
+    let list = [];
+    try {
+      const maybe = JSON.parse(t);
+      if (Array.isArray(maybe)) list = maybe;
+      else throw new Error("not array");
+    } catch {
+      // JSON Lines対応
+      list = t.split(/\r?\n/).map(s=>s.trim()).filter(Boolean).map((line,i)=>{
+        try { return JSON.parse(line); } catch { console.warn("JSONL parse error at line", i+1); return null; }
+      }).filter(Boolean);
+    }
+    cards = list.map(x => ({ name: String(x.name ?? "").trim(), value: String(x.value ?? "").trim() }))
+                .filter(x => x.name || x.value);
+    if (!cards.length) {
+      throw new Error("カードが0件でした（フォーマット要確認）");
+    }
+    order = Array.from(cards.keys());
+    // 既存進捗の復元（同一内容のときのみ）
+    if (!loadProgress(deckHash)) {
+      // 新規ロード時はシャッフル開始
+      fisherShuffle(order);
+      cursor = 0; reveal = !!el.autoReveal.checked; stats = { ok:0, ng:0 }; wrongPool.clear();
+    }
+  }
+
+  /*** ボタン/キー ***/
+  el.show.addEventListener('click', ()=> showAnswer(true));
+  el.hide.addEventListener('click', ()=> showAnswer(false));
+  el.next.addEventListener('click', nextCard);
+  el.prev.addEventListener('click', prevCard);
+  el.correct.addEventListener('click', markCorrect);
+  el.wrong.addEventListener('click', markWrong);
+  el.shuffle.addEventListener('click', ()=>{
+    if (!cards.length) return;
+    fisherShuffle(order);
+    cursor = 0;
+    reveal = !!el.autoReveal.checked;
+    renderQA(); saveProgress();
+  });
+  el.reset.addEventListener('click', ()=>{
+    if (!confirm("進捗をリセットしますか？")) return;
+    stats = {ok:0, ng:0}; wrongPool.clear();
+    order = Array.from(cards.keys());
+    fisherShuffle(order);
+    cursor = 0; reveal = false; renderQA(); saveProgress();
+  });
+  el.mode.addEventListener('change', ()=>{ reveal = !!el.autoReveal.checked; renderQA(); saveProgress(); });
+  el.autoReveal.addEventListener('change', ()=>{ reveal = !!el.autoReveal.checked; renderQA(); saveProgress(); });
+  el.reload.addEventListener('click', fetchRemote);
+
+  document.addEventListener('keydown', (ev)=>{
+    if (ev.target && /input|textarea|select/.test(ev.target.tagName.toLowerCase())) return;
+    if (ev.code === 'Space') { ev.preventDefault(); showAnswer(!reveal); }
+    else if (ev.code === 'Enter') { ev.preventDefault(); nextCard(); }
+    else if (ev.code === 'ArrowRight') { nextCard(); }
+    else if (ev.code === 'ArrowLeft') { prevCard(); }
+    else if (ev.key === '1') { markCorrect(); }
+    else if (ev.key === '2') { markWrong(); }
+  });
+
+  /*** 進捗エクスポート/インポート（UTF-8） ***/
+  el.export.addEventListener('click', ()=>{
+    if (!deckHash) { alert("先にデータを取得してください。"); return; }
+    const data = localStorage.getItem(saveKey()) || "{}";
+    const blob = new Blob([data], { type:"application/json;charset=utf-8" });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `progress.${deckHash}.json`;
+    a.click();
+    URL.revokeObjectURL(a.href);
+  });
+
+  el.progressFile.addEventListener('change', async (e)=>{
+    const f = e.target.files?.[0]; if (!f) return;
+    const text = await f.text();
+    try {
+      const p = JSON.parse(text);
+      if (!p.deckHash) throw new Error("不正な形式です");
+      if (p.deckHash !== deckHash) {
+        if (!confirm("読み込む進捗は現在のデッキと異なる可能性があります。上書きしますか？")) return;
+      }
+      localStorage.setItem(`flashcards.${p.deckHash}.v1`, JSON.stringify(p));
+      if (p.deckHash === deckHash) { loadProgress(deckHash); renderQA(); }
+      alert("進捗を読み込みました。");
+    } catch (e) {
+      alert("進捗JSONの読み込みに失敗しました。形式をご確認ください。");
+    }
+  });
+
+  /*** 起動時に固定URLから取得 ***/
+  fetchRemote();
+  renderQA();
+})();
+</script>
+</body>
+</html>
